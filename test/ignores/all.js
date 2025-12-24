@@ -137,13 +137,6 @@ const skip = [
     // Current behavior is arbitrary
     "render-tests/geojson/inline-linestring-fill",
 
-    // Broken in similar way as gl-native https://mapbox.atlassian.net/browse/MAPSNAT-3407
-    "render-tests/icon-size/small-stretch-area",
-
-    // Broken in similar way as gl-native https://mapbox.atlassian.net/browse/MAPSNAT-3448
-    "render-tests/icon-size/depends-on-coalesce-image",
-    "render-tests/appearance/icon-size-depends-on-coalesce-image",
-
     // Broken in similar way as gl-native https://mapbox.atlassian.net/browse/MAPSNAT-3482
     "render-tests/appearance/empty-image-in-appearance",
     "render-tests/appearance/icon-text-fit-vertical/non-existent-image",
@@ -250,7 +243,7 @@ const skip = [
     "render-tests/background-pattern/image-update/delayed/different-size-with-color-theme",
 
     // https://mapbox.atlassian.net/browse/GLJS-1295
-    "render-tests/placement/icon-optional",
+    "render-tests/placement/icon-optional/basic",
     "render-tests/placement/text-optional/basic",
     "render-tests/placement/text-optional/text-variable-anchor",
     // limit number of holes experimental for native
@@ -286,10 +279,9 @@ const skip = [
     "render-tests/building/terrain/terrain-unsupported",
     "render-tests/building/globe-unsupported",
 
-    // Ignore procedural buiding clip layer render tests for now.
-    "render-tests/building/clip-layer/default",
-    "render-tests/building/clip-layer/lower-order-clipping-skipped",
-    "render-tests/building/clip-layer/with-FE-and-landmarks"
+    // Not implemented, https://mapbox.atlassian.net/browse/GLJS-1591
+    "render-tests/slots/inner-slot-before-outer",
+    "render-tests/slots/mixed-slot-order-with-imports",
 ];
 
 export default {todo, skip};

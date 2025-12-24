@@ -1258,6 +1258,39 @@ describe('Style#moveLayer', () => {
         style.moveLayer('b', 'b');
         expect(style._order).toEqual(['a', 'b', 'c']);
     });
+
+    test('Throws a warning when layers have different slots', async () => {
+        const style = new Style(new StubMap());
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        style.loadJSON(createStyleJSON({
+            layers: [
+                {id: 'a', type: 'background', slot: 'main'},
+                {id: 'b', type: 'background', slot: 'aux'}
+            ]
+        }));
+
+        await waitFor(style, "style.load");
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        style.moveLayer('b', 'a');
+        expect(warnSpy).toHaveBeenCalledOnce();
+        expect(warnSpy).toHaveBeenCalledWith('Layer with id "a" has a different slot. Layers can only be rearranged within the same slot.');
+        expect(style._order).toEqual(['a', 'b']);
+    });
+
+    test('Does not throw warning when layer has not a slot', async () => {
+        const style = new Style(new StubMap());
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        style.loadJSON(createStyleJSON({
+            layers: [
+                {id: 'a', type: 'background', slot: 'main'},
+                {id: 'b', type: 'background'}
+            ]
+        }));
+
+        await waitFor(style, "style.load");
+        style.moveLayer('b', 'a');
+        expect(style._order).toEqual(['b', 'a']);
+    });
 });
 
 describe('Style#setPaintProperty', () => {
@@ -2004,7 +2037,7 @@ test('Style defers expensive methods', async () => {
     style.update({});
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    expect(style.fire.mock.calls[0][0].type).toEqual('data');
+    expect(style.fire.mock.calls[0][0].type).toEqual('neworder');
 
     // called per source
     expect(style.reloadSource).toHaveBeenCalledTimes(2);
@@ -2796,4 +2829,188 @@ test('Occlusion ordering & draped layers', async () => {
         makeFQID('symbol-occlusion-2'),
         makeFQID('symbol-occlusion-3'),
     ]);
+});
+
+describe('Style#_updatePlacement', () => {
+    test('does not re-trigger placement on repaint with fadeDuration: 0 when nothing changed', async () => {
+        const map = new StubMap();
+        // Mock painter with scaleFactor (required by _updatePlacement)
+        // @ts-expect-error - painter is not part of StubMap but required for _updatePlacement
+        map.painter = {scaleFactor: 1};
+
+        // Mock replacement source with updateTime (required by _updatePlacement)
+        const replacementSource = {updateTime: 0};
+
+        const style = new Style(map);
+        style.loadJSON({
+            "version": 8,
+            "sources": {
+                "geojson": {
+                    "type": "geojson",
+                    "data": {"type": "FeatureCollection", "features": []}
+                }
+            },
+            "layers": [{
+                "id": "symbol",
+                "type": "symbol",
+                "source": "geojson"
+            }]
+        });
+
+        await waitFor(style, 'style.load');
+
+        const tr = map.transform;
+        tr.resize(512, 512);
+
+        // Compile the style layers before calling _updatePlacement
+        style.update({zoom: tr.zoom, fadeDuration: 0});
+
+        // First call to _updatePlacement - initializes placement
+        style._updatePlacement(tr, false, 0, false, replacementSource);
+
+        // Placement should be done after first call with fadeDuration: 0
+        expect(style.pauseablePlacement.isDone()).toBeTruthy();
+
+        // Spy on placement methods AFTER initial placement
+        const startNewPlacementSpy = vi.spyOn(style.pauseablePlacement, 'startNewPlacement');
+        const continuePlacementSpy = vi.spyOn(style.pauseablePlacement, 'continuePlacement');
+
+        // Second call to _updatePlacement - should NOT trigger new placement
+        style._updatePlacement(tr, false, 0, false, replacementSource);
+
+        // Assert placement methods were NOT called
+        expect(startNewPlacementSpy).not.toHaveBeenCalled();
+        expect(continuePlacementSpy).not.toHaveBeenCalled();
+
+        // Third call to _updatePlacement - verify consistent behavior
+        style._updatePlacement(tr, false, 0, false, replacementSource);
+
+        // Assert placement methods STILL were not called (verifies it's not a one-time skip)
+        expect(startNewPlacementSpy).not.toHaveBeenCalled();
+        expect(continuePlacementSpy).not.toHaveBeenCalled();
+    });
+
+    test('returns true when symbol layer is added after load due to symbolBucketsChanged', async () => {
+        const map = new StubMap();
+        // @ts-expect-error - painter is not part of StubMap but required for _updatePlacement
+        map.painter = {scaleFactor: 1};
+        const replacementSource = {updateTime: 0};
+
+        const style = new Style(map);
+        style.loadJSON({
+            "version": 8,
+            "sources": {
+                "geojson": {
+                    "type": "geojson",
+                    "data": {"type": "FeatureCollection", "features": []}
+                }
+            },
+            "layers": []
+        });
+
+        await waitFor(style, 'style.load');
+
+        const tr = map.transform;
+        tr.resize(512, 512);
+
+        style.update({zoom: tr.zoom, fadeDuration: 0});
+        style._updatePlacement(tr, false, 0, false, replacementSource);
+
+        expect(style.pauseablePlacement.isDone()).toBeTruthy();
+
+        style.addLayer({
+            "id": "symbol",
+            "type": "symbol",
+            "source": "geojson"
+        });
+
+        style.update({zoom: tr.zoom, fadeDuration: 0});
+
+        // Spy on crossTileSymbolIndex.addLayer to return true (simulating new symbol buckets)
+        // This happens in real scenarios when tiles have symbol features
+        vi.spyOn(style.crossTileSymbolIndex, 'addLayer').mockReturnValue(true);
+
+        const result = style._updatePlacement(tr, false, 0, false, replacementSource);
+
+        expect(result).toBeTruthy();
+    });
+
+    test('returns true when transformChanged', async () => {
+        const map = new StubMap();
+        // @ts-expect-error - painter is not part of StubMap but required for _updatePlacement
+        map.painter = {scaleFactor: 1};
+        const replacementSource = {updateTime: 0};
+
+        const style = new Style(map);
+        style.loadJSON({
+            "version": 8,
+            "sources": {
+                "geojson": {
+                    "type": "geojson",
+                    "data": {"type": "FeatureCollection", "features": []}
+                }
+            },
+            "layers": [{
+                "id": "symbol",
+                "type": "symbol",
+                "source": "geojson"
+            }]
+        });
+
+        await waitFor(style, 'style.load');
+
+        const tr = map.transform;
+        tr.resize(512, 512);
+
+        style.update({zoom: tr.zoom, fadeDuration: 0});
+        style._updatePlacement(tr, false, 0, false, replacementSource);
+
+        expect(style.pauseablePlacement.isDone()).toBeTruthy();
+
+        // Change transform to trigger transformChanged
+        tr.zoom = 5;
+
+        // Use fadeDuration > 0 so that setStale() is called when placement is
+        // considered stale due to transform change (line 4210-4211 in style.ts)
+        const result = style._updatePlacement(tr, false, 300, false, replacementSource);
+
+        expect(result).toBeTruthy();
+    });
+
+    test('returns true when replacementSourceChanged', async () => {
+        const map = new StubMap();
+        // @ts-expect-error - painter is not part of StubMap but required for _updatePlacement
+        map.painter = {scaleFactor: 1};
+
+        const style = new Style(map);
+        style.loadJSON({
+            "version": 8,
+            "sources": {
+                "geojson": {
+                    "type": "geojson",
+                    "data": {"type": "FeatureCollection", "features": []}
+                }
+            },
+            "layers": [{
+                "id": "symbol",
+                "type": "symbol",
+                "source": "geojson"
+            }]
+        });
+
+        await waitFor(style, 'style.load');
+
+        const tr = map.transform;
+        tr.resize(512, 512);
+
+        style.update({zoom: tr.zoom, fadeDuration: 0});
+        style._updatePlacement(tr, false, 0, false, {updateTime: 0});
+
+        expect(style.pauseablePlacement.isDone()).toBeTruthy();
+
+        // Change replacementSource updateTime to trigger replacementSourceChanged
+        const result = style._updatePlacement(tr, false, 300, false, {updateTime: 1});
+
+        expect(result).toBeTruthy();
+    });
 });
